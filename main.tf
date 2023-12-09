@@ -9,6 +9,9 @@
  https://docs.aws.amazon.com/vpc/latest/peering/vpc-peering-basics.html
  => transit gateway.
  
+ 
+ https://aws.amazon.com/blogs/networking-and-content-delivery/creating-a-single-internet-exit-point-from-multiple-vpcs-using-aws-transit-gateway/
+ 
  */
  
 provider "aws" {
@@ -17,7 +20,7 @@ provider "aws" {
 
 // VPC publica
 resource "aws_vpc" "vpc_public" {
- cidr_block = "10.0.0.0/22"	// reducir el tamaño de esta VPC para poder definir dos que no solapen?
+ cidr_block = "10.0.0.0/20"	// reducir el tamaño de esta VPC para poder definir dos que no solapen?
  
  tags = {
    Name = "public vpc"
@@ -25,18 +28,30 @@ resource "aws_vpc" "vpc_public" {
 }
 
 // subnets publicas en vpc "publica", una por cada AZ
-resource "aws_subnet" "public_subnets" {
- count      = length(var.public_subnet_cidrs)
+resource "aws_subnet" "public_subnets_in_public_vpc" {
+ count      = length(var.public_public_subnet_cidrs)
  vpc_id     = aws_vpc.vpc_public.id
- cidr_block = element(var.public_subnet_cidrs, count.index)
+ cidr_block = element(var.public_public_subnet_cidrs, count.index)
  availability_zone = element(var.azs, count.index)
  
  tags = {
-   Name = "Public Subnet ${count.index + 1}"
+   Name = "Public Subnet ${count.index + 1} in Public VPC"
  }
 }
 
-// crear el IGW en vpc publica
+// subnets privadas en vpc "publica", una por cada AZ
+resource "aws_subnet" "private_subnets_in_public_vpc" {
+ count      = length(var.public_private_subnet_cidrs)
+ vpc_id     = aws_vpc.vpc_public.id
+ cidr_block = element(var.public_private_subnet_cidrs, count.index)
+ availability_zone = element(var.azs, count.index)
+ 
+ tags = {
+   Name = "Private Subnet ${count.index + 1} in Public VPC"
+ }
+}
+
+// IGW en vpc publica
 resource "aws_internet_gateway" "gw" {
  vpc_id = aws_vpc.vpc_public.id
  
@@ -46,7 +61,7 @@ resource "aws_internet_gateway" "gw" {
 }
 
 // crear route table adicional para enrutar trafico de las subredes publicas al IGW
-resource "aws_route_table" "second_rt" {
+resource "aws_route_table" "public_rt" {
  vpc_id = aws_vpc.vpc_public.id
  
  route {
@@ -56,44 +71,132 @@ resource "aws_route_table" "second_rt" {
  
  tags = {
    Name = "Route Table"
+   Desc = "RT to grant access from public subnets to the internet"
  }
 }
 
 // asociar la route table a las subredes publicas:
 resource "aws_route_table_association" "public_subnet_asso" {
- count = length(var.public_subnet_cidrs)
- subnet_id      = element(aws_subnet.public_subnets[*].id, count.index)
- route_table_id = aws_route_table.second_rt.id
+ count = length(var.public_public_subnet_cidrs)
+ subnet_id      = element(aws_subnet.public_subnets_in_public_vpc[*].id, count.index)
+ route_table_id = aws_route_table.public_rt.id
 }
+
+
+// hasta aqui tenemos las subnets publicas con acceso a internet por el IGW. //
+
+// NATGW en las subredes publicas de la vpc publica
+// extender a todas las subredes publicas?
+// hay que pedir explicitamente una elastic ip para los natgws?
+resource "aws_eip" "nat_gateway" {
+  count = length(var.public_public_subnet_cidrs)
+#  vpc = true // error raro con IAM.
+  tags = {
+    Name = "EIP para los NATGW publicos en vpc publica ${count.index}"
+  }
+}
+
+// NATGW en subnet(s) publica(s)
+resource "aws_nat_gateway" "nat_gateway" {
+  count = length(var.public_public_subnet_cidrs)
+  allocation_id = element(aws_eip.nat_gateway[*].id, count.index)
+  subnet_id = element(aws_subnet.public_subnets_in_public_vpc[*].id, count.index)
+  #subnet_id = aws_subnet.nat_gateway.id
+  # aws_subnet.nat_gateway.id
+  tags = {
+    "Name" = "Public NAT GW ${count.index} in public subnet, public vpc"
+  }
+}
+
+// tablas de enrutamiento para las subnets privadas de la vpc publica.
+resource "aws_route_table" "rt_natgw" {
+  count = length(var.public_private_subnet_cidrs)
+  vpc_id = aws_vpc.vpc_public.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    nat_gateway_id = element(aws_nat_gateway.nat_gateway[*].id, count.index)
+  }
+  tags = {
+    "Name" = "Route table ${count.index} in private subnet, public vpc"
+  }
+}
+
+// asociar las route table a las subredes privadas de la vpc publica:
+resource "aws_route_table_association" "public_private_subnet_asso" {
+ count = length(var.public_private_subnet_cidrs)
+ subnet_id      = element(aws_subnet.private_subnets_in_public_vpc[*].id, count.index)
+ route_table_id = element(aws_route_table.rt_natgw[*].id, count.index)
+}
+
+// hasta aqui tenemos las subnets privadas de la vpc publica con las RT asociadas enrutando el tráfico a los respectivos NATGW.
 
 
 // crear la VPC privada
 resource "aws_vpc" "vpc_private" {
- cidr_block = "10.1.0.0/22"	// reducir el tamaño de esta VPC para poder definir dos que no solapen?
+// https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html	
+ cidr_block = "192.168.0.0/20"
  
  tags = {
    Name = "private vpc"
  }
 }
 
-// crear las subnets privadas, misma region, una por cada AZ (las mismas que para las publicas)
+// crear las subnets privadas, misma region, una por cada AZ (las mismas que para las publicas) pero con direccionmiento 192.168.x.x
 resource "aws_subnet" "private_subnets" {
- count      = length(var.private_subnet_cidrs)
+ count      = length(var.private_private_subnet_cidrs)
  vpc_id     = aws_vpc.vpc_private.id
- cidr_block = element(var.private_subnet_cidrs, count.index)
+ cidr_block = element(var.private_private_subnet_cidrs, count.index)
  availability_zone = element(var.azs, count.index)
   
  tags = {
-   Name = "Private Subnet ${count.index + 1}"
+   Name = "Private Subnet ${count.index + 1} in private VPC"
  }
 }
+
+// crear la TGW
+resource "aws_ec2_transit_gateway" "tgw_01" {
+  description = "TGW-01"
+  enable_default_route_table_association = false
+  enable_default_route_table_propagation = false
+}
+
+// crear los 2 attachments de las subnets privadas de la vpc privada al TGW
+// useful? LOL
+resource "aws_ec2_transit_gateway_vpc_attachment" "vpc_attachment_private" {
+//  count = length(aws_subnet.private_subnets)
+  subnet_ids         = [aws_subnet.private_subnets[0].id , aws_subnet.private_subnets[1].id ]
+  //["subnet-abc123", "subnet-def456"]  # IDs of the subnets within the VPC to connect
+  transit_gateway_id = aws_ec2_transit_gateway.tgw_01.id
+  vpc_id             = aws_vpc.vpc_private.id
+}
+
+
+resource "aws_ec2_transit_gateway_vpc_attachment" "vpc_attachment_public" {
+  subnet_ids         = [aws_subnet.private_subnets_in_public_vpc[0].id,aws_subnet.private_subnets_in_public_vpc[1].id ]
+  transit_gateway_id = aws_ec2_transit_gateway.tgw_01.id
+  vpc_id             = aws_vpc.vpc_public.id
+}
+
+
+// tabla de enrutamiento en vpc privada apuntando a TGW
+
+// attacharla 
+
+
+
+
+/////////////////// elementos solo para diagnosticar //////////////////////////////////
+
+
+
+
 
 
 ##################################
 
 // SG para asignar a las ec2 que usaremos para comprobar los requerimientos:
 resource "aws_security_group" "allow_ssh_icmp_private" {
-  name        = "allow_ssh_icmp"
+  name        = "allow_ssh_icmp_private"
   description = "Allow SSH, ICMP traffic"
   vpc_id      = aws_vpc.vpc_private.id
 
@@ -132,7 +235,7 @@ resource "aws_security_group" "allow_ssh_icmp_private" {
 
 // SG para asignar a las ec2 que usaremos para comprobar los requerimientos:
 resource "aws_security_group" "allow_ssh_icmp_public" {
-  name        = "allow_ssh_icmp"
+  name        = "allow_ssh_icmp_public"
   description = "Allow SSH, ICMP traffic"
   vpc_id      = aws_vpc.vpc_public.id
 
@@ -167,6 +270,18 @@ resource "aws_security_group" "allow_ssh_icmp_public" {
   }
 }
 
+
+
+//////////////////////// a partir de aqui no estoy esguro de si son necesarios estos elementos. ///////////////////////////////
+
+
+
+
+
+
+
+
+
 // TODO montar una transit gateway
 // TODO: tablas enrutamiento para la TGW
 
@@ -191,34 +306,6 @@ resource "aws_vpc_peering_connection" "vpc_peering" {
 */
 
 
-// NATGW en las subredes publica
-// extender a todas las subredes publicas?
-resource "aws_eip" "nat_gateway" {
-  count = length(var.public_subnet_cidrs)
-#  vpc = true
-  tags = {
-    Name = "EIP para los NATGW publicos"
-  }
-}
-
-resource "aws_nat_gateway" "nat_gateway" {
-  count = length(var.public_subnet_cidrs)
-  allocation_id = aws_eip.nat_gateway.id
-  #subnet_id = element(aws_subnet.public_subnets[*].id, count.index)
-  subnet_id = aws_subnet.nat_gateway.id
-  # aws_subnet.nat_gateway.id
-  tags = {
-    "Name" = "Public NAT GW #{count.index}"
-  }
-}
-
-resource "aws_route_table" "rt_natgw" {
-  vpc_id = aws_vpc.vpc_public.id
-  route {
-    cidr_block = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat_gateway.id
-  }
-}
 
 */
 

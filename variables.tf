@@ -1,10 +1,11 @@
+/* 
 
-variable "public_subnet_cidrs" {
- type        = list(string)
- description = "Public Subnet CIDR values"
- default     = ["10.0.1.0/24", "10.0.2.0/24"]
-}
- 
+tercer digito de la IP:
+	impar: subnet publica
+	par : subnet privada
+
+*/
+
 // definir sobre que AZ pasamos las subnets.
 variable "azs" {
  type        = list(string)
@@ -12,10 +13,31 @@ variable "azs" {
  default     = ["us-west-2a", "us-west-2b"]
 }
 
-variable "private_subnet_cidrs" {
+
+// direccionamiento de todas las subnets
+variable "public_public_subnet_cidrs" {
+ type        = list(string)
+ description = "Public Subnet CIDR values"
+ default     = ["10.0.1.0/24", "10.0.3.0/24"]
+}
+ 
+variable "public_private_subnet_cidrs" {
+ type        = list(string)
+ description = "Public Subnet CIDR values"
+ default     = ["10.0.2.0/24", "10.0.4.0/24"]
+}
+
+// TODO: solo para diagnosticar
+variable "private_public_subnet_cidrs" {
  type        = list(string)
  description = "Private Subnet CIDR values"
- default     = ["10.1.1.0/24", "10.1.2.0/24"]
+ default     = ["192.168.1.0/24", "192.168.3.0/24"]
+}
+ 
+variable "private_private_subnet_cidrs" {
+ type        = list(string)
+ description = "Private Subnet CIDR values"
+ default     = ["192.168.2.0/24", "192.168.4.0/24"]
 }
 
 
