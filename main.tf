@@ -15,7 +15,8 @@
  */
  
 provider "aws" {
-  region = "us-west-2"	// Oregon
+//  region = "us-west-2" # Oregon
+  region = "us-east-1"	# Virgnia
 } 
 
 // VPC publica
@@ -156,9 +157,10 @@ resource "aws_subnet" "private_subnets" {
 // crear la TGW
 resource "aws_ec2_transit_gateway" "tgw_01" {
   description = "TGW-01"
-  enable_default_route_table_association = false
-  enable_default_route_table_propagation = false
+  default_route_table_association = "disable"
+  default_route_table_propagation = "disable"
 }
+
 
 // crear los 2 attachments de las subnets privadas de la vpc privada al TGW
 // useful? LOL
@@ -178,12 +180,49 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "vpc_attachment_public" {
 }
 
 
-// tabla de enrutamiento en vpc privada apuntando a TGW
+// tabla de enrutamiento para TGW
+resource "aws_ec2_transit_gateway_route_table" "TGW_RTB" {
+  transit_gateway_id = aws_ec2_transit_gateway.tgw_01.id
+  tags = {
+    "name" = "TGW_RTB_VPC_privada_publica"
+  }
+}
 
-// attacharla 
+// añadir una ruta 
+resource "aws_ec2_transit_gateway_route" "TGW_RTB_VPC_privada_Route_1" {
+  destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.vpc_attachment_public.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.TGW_RTB.id
+}
+
+// asociar la RT al attachment de la TGW.
+resource "aws_ec2_transit_gateway_route_table_association" "TGW_RTB_VPC_B_C_Association_1" {
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.vpc_attachment_private.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.TGW_RTB.id
+}
 
 
 
+/// ---
+
+resource "aws_ec2_transit_gateway_route_table" "TGW_RTB_2" {
+  transit_gateway_id = aws_ec2_transit_gateway.tgw_01.id
+
+  tags = {
+    "name" = "TGW_RTB_VPC_publica"
+  }
+}
+
+resource "aws_ec2_transit_gateway_route" "TGW_RTB_VPC_A_Route_1" {
+  destination_cidr_block         = "10.0.0.0/16"
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.vpc_attachment_private.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.TGW_RTB_2.id
+}
+
+resource "aws_ec2_transit_gateway_route_table_association" "TGW_RTB_VPC_A_Association_1" {
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.vpc_attachment_public.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.TGW_RTB_2.id
+}
 
 /////////////////// elementos solo para diagnosticar //////////////////////////////////
 
@@ -307,7 +346,7 @@ resource "aws_vpc_peering_connection" "vpc_peering" {
 
 
 
-*/
+
 
 ##############################################
 

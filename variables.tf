@@ -10,7 +10,7 @@ tercer digito de la IP:
 variable "azs" {
  type        = list(string)
  description = "Availability Zones"
- default     = ["us-west-2a", "us-west-2b"]
+ default     = ["us-east-1a", "us-east-1b"]
 }
 
 
