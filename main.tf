@@ -214,7 +214,7 @@ resource "aws_ec2_transit_gateway_route_table" "TGW_RTB_2" {
 }
 
 resource "aws_ec2_transit_gateway_route" "TGW_RTB_VPC_A_Route_1" {
-  destination_cidr_block         = "10.0.0.0/16"
+  destination_cidr_block         = "10.0.0.0/20"
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.vpc_attachment_private.id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.TGW_RTB_2.id
 }
